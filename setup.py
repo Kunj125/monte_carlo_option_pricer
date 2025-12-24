@@ -20,8 +20,8 @@ ext_modules = [
 
 setup(
     name='market_engine',
-    version='1.0',
+    version='2.0',
     author='Kunj',
-    description='Financial Monte Carlo engine in C++',
+    description='Heston monte marlo engine in C++',
     ext_modules=ext_modules,
 )

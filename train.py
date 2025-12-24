@@ -8,9 +8,16 @@ import matplotlib.pyplot as plt
 S0 = 100.0
 K = 100.0
 R = 0.05
-SIGMA = 0.2
+# SIGMA = 0.2
 T = 1.0
 STEPS = 50
+
+# heston params
+V0 = 0.04
+KAPPA = 2.0
+THETA = 0.04
+XI = 0.3  # volat of volat
+RHO = -0.7  # Correlation (stock down -> volat up)
 
 BATCH_SIZE = 64
 EPOCHS = 2000
@@ -30,17 +37,20 @@ def train():
         start_prices = []
         for _ in range(BATCH_SIZE):
             rand_S0 = S0 * (0.8 + 0.4 * torch.rand(1).item())
-            res = market_engine.generate_path(S0, R, SIGMA, T, STEPS)
+
+            res = market_engine.generate_path(
+                rand_S0, R, V0, KAPPA, THETA, XI, RHO, T, STEPS)
             paths.append(res)
             start_prices.append(rand_S0)
 
         price_paths = torch.tensor(paths, dtype=torch.float32)
         S0_vec = torch.tensor(start_prices, dtype=torch.float32).unsqueeze(1)
 
-        # calculate bs price
-        d1 = (torch.log(S0_vec / K) + (R + 0.5 * SIGMA**2) * T) / \
-            (SIGMA * np.sqrt(T))
-        d2 = d1 - SIGMA * np.sqrt(T)
+        # bs approximation using sqrt(V0) as a proxy for sigma to get a rough fair value
+        approx_sigma = np.sqrt(V0)
+        d1 = (torch.log(S0_vec / K) + (R + 0.5 * approx_sigma**2) * T) / \
+            (approx_sigma * np.sqrt(T))
+        d2 = d1 - approx_sigma * np.sqrt(T)
         bs_price = S0_vec * torch.distributions.Normal(0, 1).cdf(d1) - \
             K * np.exp(-R * T) * torch.distributions.Normal(0, 1).cdf(d2)
 
@@ -95,7 +105,7 @@ def plot_strategy(model):
 
     time_left = 0.5  # halfway to expiry
     current_holding = 0.5  # already own 0.5 shares
-
+    approx_sigma = np.sqrt(V0)
     ai_deltas = []
     bs_deltas = []
 
@@ -109,19 +119,19 @@ def plot_strategy(model):
         ai_deltas.append(ai_action)
 
         # black-scholes answer
-        d1 = (np.log(p/K) + (R + 0.5*SIGMA**2)*time_left) / \
-            (SIGMA*np.sqrt(time_left))
+        d1 = (np.log(p/K) + (R + 0.5*approx_sigma**2)*time_left) / \
+            (approx_sigma*np.sqrt(time_left))
         bs_action = torch.distributions.Normal(
             0, 1).cdf(torch.tensor(d1)).item()
         bs_deltas.append(bs_action)
 
     plt.figure(figsize=(10, 6))
-    plt.plot(prices, bs_deltas, label='Black-Scholes (Zero Cost)',
+    plt.plot(prices, bs_deltas, label='BS benchmark with constant vol',
              color='black', linestyle='--')
-    plt.plot(prices, ai_deltas, label='Deep Hedging AI (Transaction Costs)',
+    plt.plot(prices, ai_deltas, label='Heston AI (costs + stochastic vol)',
              color='red', linewidth=2)
 
-    plt.title(f"AI Strategy vs Textbook (Time Left = {time_left:.1f}y)")
+    plt.title(f"Heston hedging vs Black_Scholes (Time Left = {time_left:.1f}y)")
     plt.xlabel("Stock Price")
     plt.ylabel("Hedge Ratio (Shares Held)")
     plt.legend()
