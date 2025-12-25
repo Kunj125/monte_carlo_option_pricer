@@ -1,27 +1,10 @@
+import plot
 import torch
 import torch.optim as optim
 import numpy as np
 from DeepHedging import HedgingNetwork
 import market_engine
-import matplotlib.pyplot as plt
-
-S0 = 100.0
-K = 100.0
-R = 0.05
-# SIGMA = 0.2
-T = 1.0
-STEPS = 50
-
-# heston params
-V0 = 0.04
-KAPPA = 2.0
-THETA = 0.04
-XI = 0.3  # volat of volat
-RHO = -0.7  # Correlation (stock down -> volat up)
-
-BATCH_SIZE = 64
-EPOCHS = 2000
-RISK_AVERSION = 1.0
+import config
 
 
 def train():
@@ -32,15 +15,15 @@ def train():
     # drop lr by half every 500 epochs
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.5)
 
-    for i in range(EPOCHS):
+    for i in range(config.EPOCHS):
         paths = []
         vol_list = []
         start_prices = []
-        for _ in range(BATCH_SIZE):
-            rand_S0 = S0 * (0.8 + 0.4 * torch.rand(1).item())
+        for _ in range(config.BATCH_SIZE):
+            rand_S0 = config.S0 * (0.8 + 0.4 * torch.rand(1).item())
 
             prices, vols = market_engine.generate_path(
-                rand_S0, R, V0, KAPPA, THETA, XI, RHO, T, STEPS)
+                rand_S0, config.R, config.V0, config.KAPPA, config.THETA, config.XI, config.RHO, config.T, config.STEPS)
             paths.append(prices)
             vol_list.append(vols)
             start_prices.append(rand_S0)
@@ -50,24 +33,25 @@ def train():
         S0_vec = torch.tensor(start_prices, dtype=torch.float32).unsqueeze(1)
 
         # bs approximation using sqrt(V0) as a proxy for sigma to get a rough fair value
-        approx_sigma = np.sqrt(V0)
-        d1 = (torch.log(S0_vec / K) + (R + 0.5 * approx_sigma**2) * T) / \
-            (approx_sigma * np.sqrt(T))
-        d2 = d1 - approx_sigma * np.sqrt(T)
+        approx_sigma = np.sqrt(config.V0)
+        d1 = (torch.log(S0_vec / config.K) + (config.R + 0.5 * approx_sigma**2) * config.T) / \
+            (approx_sigma * np.sqrt(config.T))
+        d2 = d1 - approx_sigma * np.sqrt(config.T)
         bs_price = S0_vec * torch.distributions.Normal(0, 1).cdf(d1) - \
-            K * np.exp(-R * T) * torch.distributions.Normal(0, 1).cdf(d2)
+            config.K * np.exp(-config.R * config.T) * \
+            torch.distributions.Normal(0, 1).cdf(d2)
 
         cash = bs_price.squeeze()
-        holdings = torch.zeros(BATCH_SIZE)
-        dt = T / STEPS
-        for t in range(STEPS):
+        holdings = torch.zeros(config.BATCH_SIZE)
+        dt = config.T / config.STEPS
+        for t in range(config.STEPS):
             cur_prices = price_paths[:, t]
             cur_vols = vol_paths[:, t]
-            time_left = T - (t * dt)
+            time_left = config.T - (t * dt)
 
-            log_price = torch.log(cur_prices / K).unsqueeze(1)
+            log_price = torch.log(cur_prices / config.K).unsqueeze(1)
 
-            time_left_vec = torch.full((BATCH_SIZE, 1), time_left)
+            time_left_vec = torch.full((config.BATCH_SIZE, 1), time_left)
             holdings_vec = holdings.unsqueeze(1)
             vol_vec = cur_vols.unsqueeze(1)
             state = torch.cat(
@@ -84,11 +68,11 @@ def train():
 
         final_prices = price_paths[:, -1]
         portfolio_value = cash + (holdings * final_prices)
-        payoff = torch.relu(final_prices - K)
+        payoff = torch.relu(final_prices - config.K)
 
         pnl = portfolio_value - payoff
 
-        loss = torch.log(torch.mean(torch.exp(-RISK_AVERSION * pnl)))
+        loss = torch.log(torch.mean(torch.exp(-config.RISK_AVERSION * pnl)))
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -102,49 +86,8 @@ def train():
     return model
 
 
-def plot_strategy(model):
-    print("Generating Strategy Plot...")
-    model.eval()
-
-    prices = np.linspace(80, 120, 100)
-
-    time_left = 0.5  # halfway to expiry
-    current_holding = 0.5  # already own 0.5 shares
-    approx_sigma = np.sqrt(V0)
-    current_vol = np.sqrt(V0)
-    ai_deltas = []
-    bs_deltas = []
-
-    for p in prices:
-        log_p = np.log(p / S0)
-        inp = torch.tensor(
-            [log_p, time_left, current_holding, current_vol], dtype=torch.float32)
-        state = inp.unsqueeze(0)
-
-        ai_action = model(state).item()
-        ai_deltas.append(ai_action)
-
-        # black-scholes answer
-        d1 = (np.log(p/K) + (R + 0.5*approx_sigma**2)*time_left) / \
-            (approx_sigma*np.sqrt(time_left))
-        bs_action = torch.distributions.Normal(
-            0, 1).cdf(torch.tensor(d1)).item()
-        bs_deltas.append(bs_action)
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(prices, bs_deltas, label='BS benchmark with constant vol',
-             color='black', linestyle='--')
-    plt.plot(prices, ai_deltas, label='Heston AI (costs + stochastic vol)',
-             color='red', linewidth=2)
-
-    plt.title(
-        f"Heston hedging vs Black_Scholes (Time Left = {time_left:.1f}y)")
-    plt.xlabel("Stock Price")
-    plt.ylabel("Hedge Ratio (Shares Held)")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.show()
-
 if __name__ == "__main__":
     trained_model = train()
-    plot_strategy(trained_model)
+    plot.plot_strategy(model=trained_model)
+    plot.plot_pnl_distribution(trained_model)
+    plot.plot_time_dynamics(model=trained_model)
