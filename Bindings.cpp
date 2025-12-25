@@ -5,7 +5,7 @@
 
 namespace py = pybind11;
 
-std::vector<double> py_generate_heston_path(double S0, double r, double v0, double kappa, double theta,
+std::pair<std::vector<double>, std::vector<double>> py_generate_heston_path(double S0, double r, double v0, double kappa, double theta,
                                             double xi, double rho, double T, int steps)
 {
     std::random_device rd;

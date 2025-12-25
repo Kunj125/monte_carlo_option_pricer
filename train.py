@@ -25,7 +25,7 @@ RISK_AVERSION = 1.0
 
 
 def train():
-    model = HedgingNetwork()
+    model = HedgingNetwork(4)
     learning_rate = 0.005
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -34,16 +34,19 @@ def train():
 
     for i in range(EPOCHS):
         paths = []
+        vol_list = []
         start_prices = []
         for _ in range(BATCH_SIZE):
             rand_S0 = S0 * (0.8 + 0.4 * torch.rand(1).item())
 
-            res = market_engine.generate_path(
+            prices, vols = market_engine.generate_path(
                 rand_S0, R, V0, KAPPA, THETA, XI, RHO, T, STEPS)
-            paths.append(res)
+            paths.append(prices)
+            vol_list.append(vols)
             start_prices.append(rand_S0)
 
         price_paths = torch.tensor(paths, dtype=torch.float32)
+        vol_paths = torch.tensor(vol_list, dtype=torch.float32)
         S0_vec = torch.tensor(start_prices, dtype=torch.float32).unsqueeze(1)
 
         # bs approximation using sqrt(V0) as a proxy for sigma to get a rough fair value
@@ -59,14 +62,16 @@ def train():
         dt = T / STEPS
         for t in range(STEPS):
             cur_prices = price_paths[:, t]
+            cur_vols = vol_paths[:, t]
             time_left = T - (t * dt)
 
             log_price = torch.log(cur_prices / K).unsqueeze(1)
 
             time_left_vec = torch.full((BATCH_SIZE, 1), time_left)
             holdings_vec = holdings.unsqueeze(1)
-
-            state = torch.cat((log_price, time_left_vec, holdings_vec), 1)
+            vol_vec = cur_vols.unsqueeze(1)
+            state = torch.cat(
+                (log_price, time_left_vec, holdings_vec, vol_vec), 1)
 
             target_holdings = model(state).squeeze()
 
@@ -106,13 +111,14 @@ def plot_strategy(model):
     time_left = 0.5  # halfway to expiry
     current_holding = 0.5  # already own 0.5 shares
     approx_sigma = np.sqrt(V0)
+    current_vol = np.sqrt(V0)
     ai_deltas = []
     bs_deltas = []
 
     for p in prices:
         log_p = np.log(p / S0)
         inp = torch.tensor(
-            [log_p, time_left, current_holding], dtype=torch.float32)
+            [log_p, time_left, current_holding, current_vol], dtype=torch.float32)
         state = inp.unsqueeze(0)
 
         ai_action = model(state).item()
@@ -131,13 +137,13 @@ def plot_strategy(model):
     plt.plot(prices, ai_deltas, label='Heston AI (costs + stochastic vol)',
              color='red', linewidth=2)
 
-    plt.title(f"Heston hedging vs Black_Scholes (Time Left = {time_left:.1f}y)")
+    plt.title(
+        f"Heston hedging vs Black_Scholes (Time Left = {time_left:.1f}y)")
     plt.xlabel("Stock Price")
     plt.ylabel("Hedge Ratio (Shares Held)")
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.show()
-
 
 if __name__ == "__main__":
     trained_model = train()
