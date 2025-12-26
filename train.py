@@ -5,6 +5,7 @@ import numpy as np
 from DeepHedging import HedgingNetwork
 import market_engine
 import config
+import os
 
 
 def train():
@@ -83,7 +84,26 @@ def train():
                 f"Epoch {i}: Loss = {loss.item():.4f} | LR = {current_lr:.6f}")
 
     print("Training finished")
+
+    torch.save(model.state_dict(), config.MODEL_SAVE_PATH)
+    print(f"Model weights saved to {config.MODEL_SAVE_PATH}")
     return model
+
+
+def load_model(path=None):
+    if path is None:
+        path = config.MODEL_SAVE_PATH
+
+    print(f"Loading model from {path}...")
+    model = HedgingNetwork(input_dim=4)
+
+    if os.path.exists(path):
+        model.load_state_dict(torch.load(path))
+        model.eval()
+        print("Model loaded successfully")
+        return model
+    else:
+        raise FileNotFoundError(f"No model found at {path}")
 
 
 if __name__ == "__main__":
