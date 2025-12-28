@@ -10,9 +10,16 @@ import os
 
 def train():
     model = HedgingNetwork(4)
-    learning_rate = 0.005
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
+    var_level = torch.tensor([0.0], requires_grad=True)
+    params = list(model.parameters())
+    if config.USE_CVAR:
+        params.append(var_level)
+
+    learning_rate = 0.005
+    optimizer = optim.Adam(params, lr=learning_rate)
+
+    print(f"Starting Training (CVaR={config.USE_CVAR})...")
     # drop lr by half every 500 epochs
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.5)
 
@@ -73,18 +80,25 @@ def train():
 
         pnl = portfolio_value - payoff
 
-        loss = torch.log(torch.mean(torch.exp(-config.RISK_AVERSION * pnl)))
+        if config.USE_CVAR:
+            losses = -pnl
+            # https://sites.math.washington.edu/~rtr/papers/rtr179-CVaR1.pdf
+            cvar_loss = var_level + (1.0 / (1.0 - config.ALPHA_CVAR)) * torch.mean(torch.relu(losses - var_level))
+            loss = cvar_loss
+        else:
+            loss = torch.log(torch.mean(torch.exp(-config.RISK_AVERSION * pnl)))        
+        
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         scheduler.step()
+
         if i % 100 == 0:
-            current_lr = scheduler.get_last_lr()[0]
-            print(
-                f"Epoch {i}: Loss = {loss.item():.4f} | LR = {current_lr:.6f}")
-
+            if config.USE_CVAR:
+                print(f"Epoch {i}: CVaR Loss = {loss.item():.4f} | VaR Level = {var_level.item():.4f}")
+            else:
+                print(f"Epoch {i}: Loss = {loss.item():.4f}")
     print("Training finished")
-
     torch.save(model.state_dict(), config.MODEL_SAVE_PATH)
     print(f"Model weights saved to {config.MODEL_SAVE_PATH}")
     return model

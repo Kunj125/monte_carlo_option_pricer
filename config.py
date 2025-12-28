@@ -17,3 +17,5 @@ EPOCHS = 2000
 RISK_AVERSION = 1.0
 LEARNING_RATE = 0.001
 MODEL_SAVE_PATH = "heston_model.pth"
+USE_CVAR = True
+ALPHA_CVAR = 0.95 # expected shortfall
